@@ -179,7 +179,25 @@ export class ItemsService {
       throw AppError.notFound('Item not found');
     }
 
-    await item.update(data);
+    // Whitelist editable fields. `currentStock` is intentionally excluded — stock
+    // may only change through StockMovement / inventory adjustments, never a direct PATCH.
+    const allowed: (keyof typeof data)[] = [
+      'name', 'sku', 'barcode', 'hsnCode', 'category', 'purchasePrice', 'sellingPrice', 'mrp',
+      'isTaxInclusive', 'gstRate', 'cessRate', 'reorderLevel', 'trackBatches', 'taxCategoryId',
+      'unitId', 'isActive', 'imageUrl',
+    ];
+    const updates: Record<string, any> = {};
+    for (const key of allowed) {
+      if (data[key] !== undefined) updates[key] = data[key];
+    }
+
+    // Enforce barcode uniqueness within the shop when changing it.
+    if (updates.barcode && updates.barcode !== item.barcode) {
+      const clash = await Item.findOne({ where: { shopId, barcode: updates.barcode } });
+      if (clash) throw AppError.conflict(`An item with barcode "${updates.barcode}" already exists`);
+    }
+
+    await item.update(updates);
     return item;
   }
 

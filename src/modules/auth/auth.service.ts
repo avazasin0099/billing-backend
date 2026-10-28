@@ -98,9 +98,8 @@ export class AuthService {
       currentSequence: 0,
     });
 
-    // 4. Create Owner User
+    // 4. Create Owner User (no default PIN — must be set explicitly for counter login)
     const passwordHash = await bcrypt.hash(data.password, 10);
-    const pinHash = await bcrypt.hash('1234', 10); // Default PIN
 
     const user = await User.create({
       businessId: business.id,
@@ -108,7 +107,7 @@ export class AuthService {
       email: data.email,
       phone: data.phone,
       passwordHash,
-      pinHash,
+      pinHash: null,
       role: UserRole.OWNER,
       isActive: true,
       lastLoginAt: new Date(),
@@ -212,11 +211,25 @@ export class AuthService {
     };
   }
 
-  public static async pinLogin(pin: string, shopId?: string) {
-    // Find all active users and compare pin
-    const users = await User.findAll({ where: { isActive: true } });
-    let matchedUser: User | null = null;
+  public static async pinLogin(pin: string, shopId: string) {
+    // PIN login is scoped to a specific shop (the counter device). We only ever
+    // compare the PIN against users who have an active membership for THAT shop,
+    // never globally across every tenant in the system.
+    const shop = await Shop.findByPk(shopId);
+    if (!shop || !shop.isActive) {
+      throw AppError.badRequest('Shop not found');
+    }
 
+    const shopMemberships = await UserShopMembership.findAll({
+      where: { shopId, isActive: true },
+    });
+    const candidateUserIds = shopMemberships.map((m) => m.userId);
+
+    const users = candidateUserIds.length
+      ? await User.findAll({ where: { id: candidateUserIds, isActive: true } })
+      : [];
+
+    let matchedUser: User | null = null;
     for (const u of users) {
       if (u.pinHash && (await bcrypt.compare(pin, u.pinHash))) {
         matchedUser = u;
@@ -228,21 +241,7 @@ export class AuthService {
       throw AppError.unauthorized('Invalid counter PIN');
     }
 
-    let targetShopId = shopId;
-    let shop: Shop | null = null;
-
-    if (targetShopId) {
-      shop = await Shop.findByPk(targetShopId);
-    } else {
-      shop = await Shop.findOne({ where: { businessId: matchedUser.businessId, isActive: true } });
-      targetShopId = shop?.id;
-    }
-
-    if (!shop || !targetShopId) {
-      throw AppError.badRequest('Shop not found');
-    }
-
-    const tokens = this.generateTokens(matchedUser, targetShopId);
+    const tokens = this.generateTokens(matchedUser, shopId);
 
     return {
       user: {

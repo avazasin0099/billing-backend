@@ -25,6 +25,7 @@ import {
   PaymentMethod,
   MovementType,
   LedgerEntryType,
+  UserRole,
 } from '../../shared/constants';
 
 export interface CreateInvoiceItemDto {
@@ -51,6 +52,10 @@ export interface CreateInvoiceDto {
   items: CreateInvoiceItemDto[];
   payments?: CreateInvoicePaymentDto[];
   roundOff?: boolean;
+  /** Optional client-generated key to make invoice creation idempotent (retries/double-submit). */
+  idempotencyKey?: string;
+  /** Manager/owner may waive the customer credit limit for this bill. */
+  overrideCreditLimit?: boolean;
 }
 
 export class BillingService {
@@ -59,10 +64,13 @@ export class BillingService {
    */
   public static async generateNextInvoiceNumber(
     shopId: string,
-    transaction: any
+    transaction: any,
+    prefix = 'INV'
   ): Promise<string> {
-    const currentYear = new Date().getFullYear();
-    const financialYear = `${currentYear}-${(currentYear + 1).toString().slice(-2)}`;
+    // Indian financial year runs April–March. Jan–Mar belongs to the prior start-year.
+    const now = new Date();
+    const startYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const financialYear = `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
 
     let sequence = await InvoiceNumberSequence.findOne({
       where: { shopId, financialYear },
@@ -74,7 +82,7 @@ export class BillingService {
       sequence = await InvoiceNumberSequence.create(
         {
           shopId,
-          prefix: 'INV',
+          prefix,
           financialYear,
           currentSequence: 0,
         },
@@ -92,10 +100,19 @@ export class BillingService {
   public static async createInvoice(
     shopId: string,
     userId: string,
-    data: CreateInvoiceDto
+    data: CreateInvoiceDto,
+    userRole?: UserRole
   ) {
     if (!data.items || data.items.length === 0) {
       throw AppError.badRequest('Invoice must contain at least one item');
+    }
+
+    const isManagerial = userRole === UserRole.OWNER || userRole === UserRole.MANAGER;
+
+    // Idempotency: if this exact client key already produced an invoice, return it (no double-post).
+    if (data.idempotencyKey) {
+      const existing = await Invoice.findOne({ where: { shopId, idempotencyKey: data.idempotencyKey } });
+      if (existing) return await this.getInvoiceById(shopId, existing.id);
     }
 
     const sequelize = getSequelize();
@@ -136,8 +153,10 @@ export class BillingService {
       }
 
       // 3. Compute Line Items and Tax Breakdown
+      const allowNegativeStock = !!(shop.settings && shop.settings.enableNegativeStock);
       const calculatedLines: any[] = [];
       const stockMovementDeltas: { item: Item; qty: number }[] = [];
+      let priceOverridden = false;
 
       for (const reqItem of data.items) {
         const dbItem = itemMap.get(reqItem.itemId);
@@ -150,12 +169,34 @@ export class BillingService {
           throw AppError.badRequest(`Invalid quantity ${quantity} for item "${dbItem.name}"`);
         }
 
-        const unitPrice =
-          reqItem.unitPrice !== undefined
-            ? Number(reqItem.unitPrice)
-            : Number(dbItem.sellingPrice);
+        // Price is locked to the catalog; only OWNER/MANAGER may override it.
+        const catalogPrice = Number(dbItem.sellingPrice);
+        let unitPrice = catalogPrice;
+        if (reqItem.unitPrice !== undefined && Number(reqItem.unitPrice) !== catalogPrice) {
+          if (!isManagerial) {
+            throw AppError.forbidden(
+              `Price override for "${dbItem.name}" requires manager/owner approval`
+            );
+          }
+          unitPrice = Number(reqItem.unitPrice);
+          priceOverridden = true;
+        }
+        if (unitPrice < 0) {
+          throw AppError.badRequest(`Invalid price for "${dbItem.name}"`);
+        }
 
         const discountAmount = Number(reqItem.discountAmount) || 0;
+        const grossAmount = unitPrice * quantity;
+        if (discountAmount < 0 || discountAmount > grossAmount) {
+          throw AppError.badRequest(`Invalid discount for "${dbItem.name}"`);
+        }
+
+        // Stock availability (respects the shop's negative-stock setting).
+        if (!allowNegativeStock && Number(dbItem.currentStock) < quantity) {
+          throw AppError.badRequest(
+            `Insufficient stock for "${dbItem.name}": available ${dbItem.currentStock}, requested ${quantity}`
+          );
+        }
 
         const lineCalc = GstService.calculateLine({
           unitPrice,
@@ -211,7 +252,11 @@ export class BillingService {
       }
 
       // 6. Generate Sequential Invoice Number
-      const invoiceNumber = await this.generateNextInvoiceNumber(shopId, transaction);
+      const invoiceNumber = await this.generateNextInvoiceNumber(
+        shopId,
+        transaction,
+        shop.settings?.invoicePrefix || 'INV'
+      );
 
       // 7. Create Invoice
       const invoice = await Invoice.create(
@@ -237,7 +282,10 @@ export class BillingService {
           balanceAmount,
           paymentStatus,
           status: InvoiceStatus.POSTED,
-          notes: data.notes,
+          notes: priceOverridden
+            ? `${data.notes ? data.notes + ' | ' : ''}Price override by ${userRole}`
+            : data.notes,
+          idempotencyKey: data.idempotencyKey,
           createdBy: userId,
         },
         { transaction }
@@ -369,6 +417,16 @@ export class BillingService {
       // 12. If customer has remaining balance (Credit/Udhaar), update Customer Ledger
       if (balanceAmount > 0 && customer) {
         const newBalance = GstService.round(Number(customer.currentBalance) + balanceAmount);
+
+        // Enforce the customer's credit limit (0 = no limit). Manager/owner may waive it.
+        const creditLimit = Number(customer.creditLimit) || 0;
+        const overrideCredit = isManagerial && data.overrideCreditLimit === true;
+        if (creditLimit > 0 && newBalance > creditLimit && !overrideCredit) {
+          throw AppError.badRequest(
+            `Credit limit exceeded for ${customer.name}: limit ₹${creditLimit}, balance would become ₹${newBalance}. Collect payment or get manager approval.`
+          );
+        }
+
         customer.currentBalance = newBalance;
         await customer.save({ transaction });
 
@@ -497,6 +555,7 @@ export class BillingService {
       let returnSubtotal = 0;
       let returnTax = 0;
       const returnedLines: any[] = [];
+      const lineUpdates: { line: any; newReturnedQty: number }[] = [];
 
       for (const returnItem of data.items) {
         const originalLine = (invoice as any).lines.find((l: any) => l.itemId === returnItem.itemId);
@@ -505,9 +564,17 @@ export class BillingService {
         }
 
         const qty = Number(returnItem.quantity);
-        if (qty <= 0 || qty > Number(originalLine.quantity)) {
+        const alreadyReturned = Number(originalLine.returnedQuantity) || 0;
+        if (qty <= 0) {
           throw AppError.badRequest(`Invalid return quantity ${qty}`);
         }
+        // Cap TOTAL returns across all credit notes to the quantity actually sold.
+        if (alreadyReturned + qty > Number(originalLine.quantity)) {
+          throw AppError.badRequest(
+            `Cannot return ${qty} of "${originalLine.itemName}": sold ${originalLine.quantity}, already returned ${alreadyReturned}`
+          );
+        }
+        lineUpdates.push({ line: originalLine, newReturnedQty: alreadyReturned + qty });
 
         const unitTaxable = Number(originalLine.taxableAmount) / Number(originalLine.quantity);
         const unitTax =
@@ -585,24 +652,54 @@ export class BillingService {
         }
       }
 
-      // 3. Handle Refund
-      if (data.refundMode === 'CASH') {
+      // 2b. Mark the returned quantity on each original line (prevents over-returning later).
+      for (const u of lineUpdates) {
+        u.line.returnedQuantity = u.newReturnedQty;
+        await u.line.save({ transaction });
+      }
+
+      // 3. Handle Refund.
+      // Cash can only be refunded up to what the customer actually paid; any remainder
+      // is settled as ledger credit (reducing their udhaar) rather than draining the drawer.
+      const paidSoFar = Number(invoice.paidAmount) || 0;
+      const cashRefund =
+        data.refundMode === 'CASH' ? GstService.round(Math.min(returnTotal, paidSoFar)) : 0;
+      const ledgerCredit = GstService.round(returnTotal - cashRefund);
+
+      if (cashRefund > 0) {
         await CashBookEntry.create(
           {
             shopId,
             description: `Sales return refund for ${invoice.invoiceNumber} (${creditNoteNumber})`,
             inflowAmount: 0,
-            outflowAmount: returnTotal,
+            outflowAmount: cashRefund,
             referenceType: 'CREDIT_NOTE',
             referenceId: creditNote.id,
             recordedBy: userId,
           },
           { transaction }
         );
-      } else if (invoice.customerId) {
-        const customer = await Customer.findByPk(invoice.customerId, { transaction });
+
+        // Cash handed back reduces how much this invoice counts as paid.
+        const newPaid = GstService.round(paidSoFar - cashRefund);
+        invoice.paidAmount = newPaid;
+        invoice.balanceAmount = GstService.round(Math.max(0, Number(invoice.totalAmount) - newPaid));
+        invoice.paymentStatus =
+          invoice.balanceAmount === 0 && newPaid >= Number(invoice.totalAmount)
+            ? PaymentStatus.PAID
+            : newPaid > 0
+            ? PaymentStatus.PARTIALLY_PAID
+            : PaymentStatus.UNPAID;
+        await invoice.save({ transaction });
+      }
+
+      if (ledgerCredit > 0 && invoice.customerId) {
+        const customer = await Customer.findByPk(invoice.customerId, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
         if (customer) {
-          const newBalance = GstService.round(Number(customer.currentBalance) - returnTotal);
+          const newBalance = GstService.round(Number(customer.currentBalance) - ledgerCredit);
           customer.currentBalance = newBalance;
           await customer.save({ transaction });
 
@@ -612,7 +709,7 @@ export class BillingService {
               customerId: customer.id,
               entryType: LedgerEntryType.CREDIT_NOTE,
               debitAmount: 0,
-              creditAmount: returnTotal,
+              creditAmount: ledgerCredit,
               runningBalance: newBalance,
               referenceType: 'CREDIT_NOTE',
               referenceId: creditNote.id,

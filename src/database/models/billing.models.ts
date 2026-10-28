@@ -149,6 +149,7 @@ export class Invoice extends Model {
   declare public paymentStatus: PaymentStatus;
   declare public status: InvoiceStatus;
   declare public notes?: string;
+  declare public idempotencyKey?: string;
   declare public createdBy?: string;
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -251,6 +252,10 @@ export const initInvoiceModel = () => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      idempotencyKey: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
       createdBy: {
         type: DataTypes.UUID,
         allowNull: true,
@@ -283,6 +288,7 @@ export class InvoiceLine extends Model {
   declare public igstAmount: number;
   declare public cessAmount: number;
   declare public lineTotal: number;
+  declare public returnedQuantity: number;
 }
 
 export const initInvoiceLineModel = () => {
@@ -352,6 +358,10 @@ export const initInvoiceLineModel = () => {
       lineTotal: {
         type: DataTypes.DECIMAL(12, 2),
         allowNull: false,
+      },
+      returnedQuantity: {
+        type: DataTypes.DECIMAL(14, 4),
+        defaultValue: 0,
       },
     },
     {

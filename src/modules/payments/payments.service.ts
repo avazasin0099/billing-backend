@@ -43,6 +43,14 @@ export class PaymentsService {
           lock: transaction.LOCK.UPDATE,
         });
         if (!invoice) throw AppError.notFound('Invoice not found');
+        if (Number(invoice.balanceAmount) <= 0) {
+          throw AppError.badRequest('This invoice is already fully paid');
+        }
+        if (amount > Number(invoice.balanceAmount)) {
+          throw AppError.badRequest(
+            `Payment ₹${amount} exceeds the outstanding balance ₹${invoice.balanceAmount}`
+          );
+        }
       }
 
       const targetCustomerId = data.customerId || invoice?.customerId;

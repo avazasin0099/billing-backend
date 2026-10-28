@@ -10,9 +10,10 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
   next();
 };
 
-const requestCounts = new Map<string, { count: number; resetTime: number }>();
-
 export const rateLimiter = (options: { windowMs: number; max: number }) => {
+  // Each limiter instance keeps its own bucket so separate limiters
+  // (e.g. the global limiter and a strict auth limiter) never share counters.
+  const requestCounts = new Map<string, { count: number; resetTime: number }>();
   return (req: Request, res: Response, next: NextFunction) => {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
     const now = Date.now();

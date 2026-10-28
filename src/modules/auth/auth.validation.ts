@@ -24,7 +24,9 @@ export const loginSchema = z.object({
 export const pinLoginSchema = z.object({
   body: z.object({
     pin: z.string().min(4).max(6),
-    shopId: z.string().uuid().optional(),
+    // Required: PIN login is scoped to a known counter/shop so PINs are matched
+    // only within that shop's business (never globally across all tenants).
+    shopId: z.string().uuid({ message: 'A shop context is required for PIN login' }),
   }),
 });
 

@@ -1,7 +1,7 @@
-import { SyncEvent, SyncConflict, Invoice, Item } from '../../database/associations';
-import { getSequelize } from '../../config/database';
+import { SyncEvent, SyncConflict, Invoice, Item, User } from '../../database/associations';
 import { BillingService } from '../billing/billing.service';
 import { logger } from '../../config/logger';
+import { UserRole } from '../../shared/constants';
 
 export interface ClientSyncEventDto {
   id: string; // client generated UUID
@@ -20,6 +20,9 @@ export class SyncService {
     events: ClientSyncEventDto[]
   ) {
     const results: { id: string; status: string; error?: string }[] = [];
+
+    const syncUser = await User.findByPk(userId);
+    const syncUserRole = (syncUser?.role as UserRole) || UserRole.CASHIER;
 
     for (const eventDto of events) {
       // 1. Idempotency Check
@@ -65,8 +68,13 @@ export class SyncService {
             }
           }
 
-          // Execute invoice creation
-          await BillingService.createInvoice(shopId, userId, eventDto.payload);
+          // Execute invoice creation (idempotent on the client event id).
+          await BillingService.createInvoice(
+            shopId,
+            userId,
+            { ...eventDto.payload, idempotencyKey: eventDto.payload.idempotencyKey || eventDto.id },
+            syncUserRole
+          );
 
           syncRecord.status = 'PROCESSED';
           syncRecord.processedAt = new Date();
