@@ -37,4 +37,27 @@ export class PurchasesController {
       next(error);
     }
   }
+
+  public static async update(req: Request, res: Response, next: NextFunction) {
+    try {
+      const shopId = req.shopId;
+      const userId = req.user?.id;
+      if (!shopId || !userId) throw AppError.badRequest('Shop and user context required');
+      const purchase = await PurchasesService.updatePurchase(shopId, userId, req.params.id, req.body);
+      return sendSuccess(res, purchase, 'Purchase invoice updated and inventory adjusted');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async delete(req: Request, res: Response, next: NextFunction) {
+    try {
+      const shopId = req.shopId;
+      if (!shopId) throw AppError.badRequest('Shop context required');
+      const result = await PurchasesService.deletePurchase(shopId, req.params.id);
+      return sendSuccess(res, result, 'Purchase invoice deleted and stock reverted');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
