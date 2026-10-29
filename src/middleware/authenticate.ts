@@ -57,6 +57,22 @@ export const authenticate = async (req: Request, _res: Response, next: NextFunct
         const firstShop = await Shop.findOne({ where: { businessId: user.businessId } });
         activeShopId = firstShop?.id;
       }
+    } else {
+      // SECURITY: a client-supplied shop (header/token) must be one this user may actually use.
+      // Without this check, setting X-Shop-Id to any UUID grants cross-tenant access.
+      const targetShop = await Shop.findByPk(activeShopId);
+      if (!targetShop || targetShop.businessId !== user.businessId) {
+        return next(AppError.forbidden('You do not have access to this shop'));
+      }
+      // Owners may use any shop in their business; others need an explicit active membership.
+      if (user.role !== UserRole.OWNER) {
+        const membership = await UserShopMembership.findOne({
+          where: { userId: user.id, shopId: activeShopId, isActive: true },
+        });
+        if (!membership) {
+          return next(AppError.forbidden('You are not assigned to this shop'));
+        }
+      }
     }
 
     req.user = {

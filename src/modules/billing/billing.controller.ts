@@ -9,7 +9,7 @@ export class BillingController {
       const shopId = req.shopId;
       const userId = req.user?.id;
       if (!shopId || !userId) throw AppError.badRequest('Shop and user context required');
-      const invoice = await BillingService.createInvoice(shopId, userId, req.body);
+      const invoice = await BillingService.createInvoice(shopId, userId, req.body, req.user?.role);
       return sendCreated(res, invoice, 'Invoice created and posted successfully');
     } catch (error) {
       next(error);

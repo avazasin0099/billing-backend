@@ -22,3 +22,19 @@ export const env = {
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
   RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000', 10),
 };
+
+// Fail fast in production if security-critical secrets were not overridden.
+if (env.NODE_ENV === 'production') {
+  const insecure: string[] = [];
+  if (!process.env.JWT_SECRET || env.JWT_SECRET.includes('billpro_dev_secret')) insecure.push('JWT_SECRET');
+  if (!process.env.JWT_REFRESH_SECRET || env.JWT_REFRESH_SECRET.includes('billpro_dev_refresh')) {
+    insecure.push('JWT_REFRESH_SECRET');
+  }
+  if (!process.env.DB_PASSWORD) insecure.push('DB_PASSWORD');
+  if (insecure.length > 0) {
+    throw new Error(
+      `Refusing to boot in production with insecure/default secrets: ${insecure.join(', ')}. ` +
+        `Set strong values via environment variables.`
+    );
+  }
+}
