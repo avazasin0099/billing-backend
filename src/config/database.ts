@@ -23,6 +23,11 @@ const getDatabaseConfig = (): Options => {
     username: env.DB_USER,
     password: env.DB_PASSWORD,
     logging: env.DB_LOGGING ? (msg) => logger.debug(msg) : false,
+    // Managed Postgres (Neon/Render/etc.) requires SSL; local/dev Postgres usually does not.
+    dialectOptions:
+      env.NODE_ENV === 'production'
+        ? { ssl: { require: true, rejectUnauthorized: false } }
+        : {},
     pool: {
       max: 20,
       min: 0,
@@ -40,6 +45,7 @@ const ensurePostgresDatabaseExists = async (): Promise<boolean> => {
       user: env.DB_USER,
       password: env.DB_PASSWORD,
       database: 'postgres', // default administrative database
+      ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
     });
 
     await client.connect();
