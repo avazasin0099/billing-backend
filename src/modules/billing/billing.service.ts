@@ -101,7 +101,10 @@ export class BillingService {
     shopId: string,
     userId: string,
     data: CreateInvoiceDto,
-    userRole?: UserRole
+    userRole?: UserRole,
+    // Offline-sync context: a queued bill was already handed to the customer, so it must
+    // persist even if server stock has since run short or the catalog price has moved.
+    syncOptions?: { allowNegativeStock?: boolean; trustClientPrice?: boolean }
   ) {
     if (!data.items || data.items.length === 0) {
       throw AppError.badRequest('Invoice must contain at least one item');
@@ -153,7 +156,8 @@ export class BillingService {
       }
 
       // 3. Compute Line Items and Tax Breakdown
-      const allowNegativeStock = !!(shop.settings && shop.settings.enableNegativeStock);
+      const allowNegativeStock =
+        !!syncOptions?.allowNegativeStock || !!(shop.settings && shop.settings.enableNegativeStock);
       const calculatedLines: any[] = [];
       const stockMovementDeltas: { item: Item; qty: number }[] = [];
       let priceOverridden = false;
@@ -173,7 +177,7 @@ export class BillingService {
         const catalogPrice = Number(dbItem.sellingPrice);
         let unitPrice = catalogPrice;
         if (reqItem.unitPrice !== undefined && Number(reqItem.unitPrice) !== catalogPrice) {
-          if (!isManagerial) {
+          if (!isManagerial && !syncOptions?.trustClientPrice) {
             throw AppError.forbidden(
               `Price override for "${dbItem.name}" requires manager/owner approval`
             );
@@ -230,7 +234,9 @@ export class BillingService {
       const validPayments = data.payments || [];
 
       for (const p of validPayments) {
-        if (p.amount > 0) {
+        // CREDIT ("Udhaar") is not money received — it is the unpaid balance that must
+        // land on the customer's ledger, so it never counts towards paidAmount.
+        if (p.amount > 0 && p.paymentMethod !== PaymentMethod.CREDIT) {
           paidAmount = GstService.round(paidAmount + Number(p.amount));
         }
       }
@@ -362,7 +368,8 @@ export class BillingService {
 
       // 11. Record Payments & Update Cash/Bank Books
       for (const paymentDto of validPayments) {
-        if (paymentDto.amount <= 0) continue;
+        // Skip non-positive and CREDIT tenders — CREDIT is recorded as a ledger balance, not a payment.
+        if (paymentDto.amount <= 0 || paymentDto.paymentMethod === PaymentMethod.CREDIT) continue;
 
         const payment = await Payment.create(
           {
@@ -486,7 +493,10 @@ export class BillingService {
     }
 
     if (query.search && query.search.trim()) {
-      where.invoiceNumber = { [Op.iLike ? Op.iLike : Op.like]: `%${query.search.trim()}%` };
+      // SQLite has no ILIKE — only Postgres supports case-insensitive iLike. Pick per dialect
+      // so invoice search works on both (the old `Op.iLike ? ...` ternary always chose iLike).
+      const likeOp = getSequelize().getDialect() === 'postgres' ? Op.iLike : Op.like;
+      where.invoiceNumber = { [likeOp]: `%${query.search.trim()}%` };
     }
 
     const { rows, count } = await Invoice.findAndCountAll({
@@ -675,6 +685,22 @@ export class BillingService {
             outflowAmount: cashRefund,
             referenceType: 'CREDIT_NOTE',
             referenceId: creditNote.id,
+            recordedBy: userId,
+          },
+          { transaction }
+        );
+
+        // Mirror the refund as a negative Payment row so the sum of Payment rows stays in
+        // lockstep with invoice.paidAmount (reports aggregate payments independently).
+        await Payment.create(
+          {
+            shopId,
+            invoiceId: invoice.id,
+            customerId: invoice.customerId,
+            paymentMethod: PaymentMethod.CASH,
+            amount: -cashRefund,
+            paymentDate: new Date(),
+            notes: `Cash refund on sales return ${creditNoteNumber}`,
             recordedBy: userId,
           },
           { transaction }

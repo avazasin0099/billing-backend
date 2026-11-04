@@ -40,22 +40,28 @@ export class AuthService {
   public static async signup(data: {
     businessName: string;
     name: string;
-    email: string;
+    email?: string;
     phone: string;
     password: string;
     gstin?: string;
     state?: string;
     stateCode?: string;
   }) {
-    const existingUser = await User.findOne({ where: { email: data.email } });
-    if (existingUser) {
-      throw AppError.conflict('An account with this email already exists');
+    // Email is optional. Store a missing email as null so the unique index does not
+    // collide across multiple email-less accounts.
+    const email = data.email?.trim() ? data.email.trim() : null;
+
+    if (email) {
+      const existingUser = await User.findOne({ where: { email } });
+      if (existingUser) {
+        throw AppError.conflict('An account with this email already exists');
+      }
     }
 
     // 1. Create Business
     const business = await Business.create({
       name: data.businessName,
-      email: data.email,
+      email,
       phone: data.phone,
       gstin: data.gstin,
       state: data.state || 'Maharashtra',
@@ -69,7 +75,7 @@ export class AuthService {
       name: `${data.businessName} (Main Branch)`,
       code: 'STORE01',
       phone: data.phone,
-      email: data.email,
+      email,
       state: data.state || 'Maharashtra',
       stateCode: data.stateCode || '27',
       gstin: data.gstin,
@@ -91,10 +97,16 @@ export class AuthService {
       isPrimary: true,
     });
 
+    // Seed the sequence for the CURRENT Indian financial year (Apr–Mar), computed rather than
+    // hardcoded so new shops created in any year get the right starting FY.
+    const now = new Date();
+    const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const currentFinancialYear = `${fyStartYear}-${String((fyStartYear + 1) % 100).padStart(2, '0')}`;
+
     await InvoiceNumberSequence.create({
       shopId: shop.id,
       prefix: 'INV',
-      financialYear: '2026-27',
+      financialYear: currentFinancialYear,
       currentSequence: 0,
     });
 
@@ -104,7 +116,7 @@ export class AuthService {
     const user = await User.create({
       businessId: business.id,
       name: data.name,
-      email: data.email,
+      email,
       phone: data.phone,
       passwordHash,
       pinHash: null,
@@ -151,15 +163,20 @@ export class AuthService {
     };
   }
 
-  public static async login(data: { email: string; password: string }) {
-    const user = await User.findOne({ where: { email: data.email } });
+  public static async login(data: { identifier: string; password: string }) {
+    // The identifier may be an email or a phone number. Pick the matching column.
+    const identifier = data.identifier.trim();
+    const isEmail = identifier.includes('@');
+    const user = await User.findOne({
+      where: isEmail ? { email: identifier } : { phone: identifier },
+    });
     if (!user || !user.isActive) {
-      throw AppError.unauthorized('Invalid email or password');
+      throw AppError.unauthorized('Invalid credentials');
     }
 
     const isValidPassword = await bcrypt.compare(data.password, user.passwordHash);
     if (!isValidPassword) {
-      throw AppError.unauthorized('Invalid email or password');
+      throw AppError.unauthorized('Invalid credentials');
     }
 
     // Find active shop

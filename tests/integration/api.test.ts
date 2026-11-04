@@ -28,7 +28,7 @@ describe('Bill Pro Integration Tests', () => {
     it('POST /api/v1/auth/login should authenticate owner and return token', async () => {
       const res = await request(app)
         .post('/api/v1/auth/login')
-        .send({ email: 'admin@billpro.local', password: 'Admin@1234' });
+        .send({ identifier: 'admin@billpro.local', password: 'Admin@1234' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);

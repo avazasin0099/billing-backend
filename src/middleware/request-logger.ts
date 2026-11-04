@@ -20,6 +20,12 @@ export const rateLimiter = (options: { windowMs: number; max: number }) => {
     const clientRecord = requestCounts.get(ip);
 
     if (!clientRecord || now > clientRecord.resetTime) {
+      // Opportunistically evict expired buckets so the Map can't grow without bound.
+      if (requestCounts.size > 5000) {
+        for (const [key, rec] of requestCounts) {
+          if (now > rec.resetTime) requestCounts.delete(key);
+        }
+      }
       requestCounts.set(ip, { count: 1, resetTime: now + options.windowMs });
       return next();
     }

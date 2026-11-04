@@ -6,7 +6,7 @@ export class User extends Model {
   declare public id: string;
   declare public businessId: string;
   declare public name: string;
-  declare public email: string;
+  declare public email?: string | null;
   declare public phone?: string;
   declare public passwordHash: string;
   declare public pinHash?: string;
@@ -35,8 +35,9 @@ export const initUserModel = () => {
       },
       email: {
         type: DataTypes.STRING,
-        allowNull: false,
+        allowNull: true,
         unique: true,
+        // Only validate when a value is actually present; NULL means "no email".
         validate: { isEmail: true },
       },
       phone: {
