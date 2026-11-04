@@ -8,7 +8,10 @@ export const signupSchema = z.object({
   body: z.object({
     businessName: z.string().min(2, 'Business name must be at least 2 characters'),
     name: z.string().min(2, 'Name must be at least 2 characters'),
-    email: z.string().email('Invalid email address'),
+    // Email is optional; when provided it must be a valid address.
+    email: z
+      .union([z.string().trim().email('Invalid email address'), z.literal('')])
+      .optional(),
     phone: z.string().min(10, 'Phone must be at least 10 digits'),
     password: z.string().min(6, 'Password must be at least 6 characters'),
     // Optional, but when present it must be a valid GSTIN whose state code matches the business.
@@ -25,7 +28,8 @@ export const signupSchema = z.object({
 
 export const loginSchema = z.object({
   body: z.object({
-    email: z.string().email('Invalid email address'),
+    // Accept either an email address or a phone number as the login identifier.
+    identifier: z.string().trim().min(1, 'Email or phone is required'),
     password: z.string().min(1, 'Password is required'),
   }),
 });

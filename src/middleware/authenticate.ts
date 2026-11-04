@@ -77,7 +77,7 @@ export const authenticate = async (req: Request, _res: Response, next: NextFunct
 
     req.user = {
       id: user.id,
-      email: user.email,
+      email: user.email || '',
       name: user.name,
       role: user.role,
       shopId: activeShopId || '',
