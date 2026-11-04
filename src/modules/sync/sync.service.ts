@@ -69,11 +69,15 @@ export class SyncService {
           }
 
           // Execute invoice creation (idempotent on the client event id).
+          // The customer already left with this bill, so it MUST persist: allow the stock to
+          // go negative (any shortfall is logged as a conflict above for reconciliation) and
+          // trust the price captured at sale time even if the catalog has since changed.
           await BillingService.createInvoice(
             shopId,
             userId,
             { ...eventDto.payload, idempotencyKey: eventDto.payload.idempotencyKey || eventDto.id },
-            syncUserRole
+            syncUserRole,
+            { allowNegativeStock: true, trustClientPrice: true }
           );
 
           syncRecord.status = 'PROCESSED';

@@ -91,10 +91,16 @@ export class AuthService {
       isPrimary: true,
     });
 
+    // Seed the sequence for the CURRENT Indian financial year (Apr–Mar), computed rather than
+    // hardcoded so new shops created in any year get the right starting FY.
+    const now = new Date();
+    const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const currentFinancialYear = `${fyStartYear}-${String((fyStartYear + 1) % 100).padStart(2, '0')}`;
+
     await InvoiceNumberSequence.create({
       shopId: shop.id,
       prefix: 'INV',
-      financialYear: '2026-27',
+      financialYear: currentFinancialYear,
       currentSequence: 0,
     });
 

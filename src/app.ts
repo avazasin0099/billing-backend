@@ -10,6 +10,10 @@ import apiRouter from './routes';
 export const createApp = (): Express => {
   const app = express();
 
+  // Trust the first proxy hop so req.ip reflects the real client (X-Forwarded-For) rather than
+  // the proxy's address — otherwise the per-IP rate limiter collapses every client into one bucket.
+  app.set('trust proxy', 1);
+
   // 1. Security Headers
   app.use(helmet({ contentSecurityPolicy: false }));
 

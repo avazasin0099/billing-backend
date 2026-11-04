@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { UserRole } from '../../shared/constants';
 
+// Standard 15-char GSTIN: 2-digit state code + 10-char PAN + entity digit + 'Z' + checksum.
+export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
 export const signupSchema = z.object({
   body: z.object({
     businessName: z.string().min(2, 'Business name must be at least 2 characters'),
@@ -8,10 +11,16 @@ export const signupSchema = z.object({
     email: z.string().email('Invalid email address'),
     phone: z.string().min(10, 'Phone must be at least 10 digits'),
     password: z.string().min(6, 'Password must be at least 6 characters'),
-    gstin: z.string().optional(),
+    // Optional, but when present it must be a valid GSTIN whose state code matches the business.
+    gstin: z
+      .union([z.string().trim().toUpperCase().regex(GSTIN_REGEX, 'Invalid GSTIN format'), z.literal('')])
+      .optional(),
     state: z.string().default('Maharashtra'),
-    stateCode: z.string().length(2).default('27'),
-  }),
+    stateCode: z.string().regex(/^[0-9]{2}$/, 'State code must be 2 digits').default('27'),
+  }).refine(
+    (b) => !b.gstin || b.gstin.slice(0, 2) === b.stateCode,
+    { path: ['gstin'], message: "GSTIN's first two digits must match the state code" }
+  ),
 });
 
 export const loginSchema = z.object({

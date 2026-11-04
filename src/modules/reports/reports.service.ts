@@ -3,15 +3,13 @@ import {
   Invoice,
   InvoiceLine,
   InvoiceTaxSummary,
-  Purchase,
   Payment,
   Customer,
-  Supplier,
-  Item,
+  StockMovement,
   Expense,
 } from '../../database/associations';
 import { GstService } from '../gst/gst.service';
-import { PaymentMethod } from '../../shared/constants';
+import { PaymentMethod, MovementType } from '../../shared/constants';
 
 export class ReportsService {
   public static async getSalesReport(
@@ -175,26 +173,33 @@ export class ReportsService {
       expWhere.expenseDate = { [Op.between]: [query.startDate, query.endDate] };
     }
 
-    const invoices = await Invoice.findAll({
-      where: invWhere,
-      include: [{ model: InvoiceLine, as: 'lines' }],
-    });
+    const invoices = await Invoice.findAll({ where: invWhere });
 
     const expenses = await Expense.findAll({ where: expWhere });
 
     let grossSalesRevenue = 0;
-    let costOfGoodsSold = 0;
-
     for (const inv of invoices) {
       grossSalesRevenue = GstService.round(grossSalesRevenue + Number(inv.taxableAmount));
-      if ((inv as any).lines) {
-        for (const line of (inv as any).lines) {
-          // Approximate COGS using current product purchase price
-          const qty = Number(line.quantity);
-          const item = await Item.findByPk(line.itemId);
-          const unitCost = item ? Number(item.purchasePrice) : Number(line.unitPrice) * 0.8;
-          costOfGoodsSold = GstService.round(costOfGoodsSold + qty * unitCost);
-        }
+    }
+
+    // COGS from the unit cost captured on each SALE stock movement at sale time — one query
+    // (no N+1) and not distorted by later purchase-price changes, unlike the old per-line
+    // Item.findByPk that used the item's *current* cost and a fabricated 0.8 fallback.
+    const invoiceIds = invoices.map((i) => i.id);
+    let costOfGoodsSold = 0;
+    if (invoiceIds.length > 0) {
+      const movements = await StockMovement.findAll({
+        where: {
+          shopId,
+          referenceType: 'INVOICE',
+          referenceId: invoiceIds,
+          movementType: MovementType.SALE,
+        },
+      });
+      for (const m of movements) {
+        costOfGoodsSold = GstService.round(
+          costOfGoodsSold + Math.abs(Number(m.quantity)) * Number(m.unitCost)
+        );
       }
     }
 
