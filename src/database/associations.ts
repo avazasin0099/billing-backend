@@ -1,5 +1,6 @@
 import { initBusinessModel, Business } from './models/business.model';
 import { initShopModel, Shop } from './models/shop.model';
+import { initCategoryModel, Category } from './models/category.model';
 import { initUserModel, User } from './models/user.model';
 import {
   initUserShopMembershipModel,
@@ -80,6 +81,7 @@ export const initializeDatabaseModels = () => {
   initRefreshTokenModel();
   initAuditLogModel();
 
+  initCategoryModel();
   initTaxCategoryModel();
   initUnitModel();
   initItemModel();
@@ -131,6 +133,9 @@ export const initializeDatabaseModels = () => {
   // Catalog & Inventory
   Shop.hasMany(Item, { foreignKey: 'shopId', as: 'items' });
   Item.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+
+  Shop.hasMany(Category, { foreignKey: 'shopId', as: 'categories' });
+  Category.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 
   TaxCategory.hasMany(Item, { foreignKey: 'taxCategoryId', as: 'items' });
   Item.belongsTo(TaxCategory, { foreignKey: 'taxCategoryId', as: 'taxCategory' });
@@ -185,6 +190,7 @@ export const initializeDatabaseModels = () => {
 export {
   Business,
   Shop,
+  Category,
   User,
   UserShopMembership,
   Device,

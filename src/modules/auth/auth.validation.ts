@@ -20,6 +20,9 @@ export const signupSchema = z.object({
       .optional(),
     state: z.string().default('Maharashtra'),
     stateCode: z.string().regex(/^[0-9]{2}$/, 'State code must be 2 digits').default('27'),
+    // Business type (e.g. grocery, electronics) and the starter categories chosen for it.
+    businessType: z.string().trim().max(40).optional(),
+    categories: z.array(z.string().trim().min(1).max(60)).max(50).optional(),
   }).refine(
     (b) => !b.gstin || b.gstin.slice(0, 2) === b.stateCode,
     { path: ['gstin'], message: "GSTIN's first two digits must match the state code" }

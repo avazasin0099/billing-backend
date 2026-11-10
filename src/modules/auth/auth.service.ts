@@ -12,6 +12,7 @@ import {
   InvoiceNumberSequence,
 } from '../../database/associations';
 import { UserRole } from '../../shared/constants';
+import { CategoriesService } from '../categories/categories.service';
 
 export class AuthService {
   private static generateTokens(user: User, shopId: string) {
@@ -46,6 +47,8 @@ export class AuthService {
     gstin?: string;
     state?: string;
     stateCode?: string;
+    businessType?: string;
+    categories?: string[];
   }) {
     // Email is optional. Store a missing email as null so the unique index does not
     // collide across multiple email-less accounts.
@@ -86,8 +89,15 @@ export class AuthService {
         thermalPrinterWidth: '3inch',
         invoicePrefix: 'INV',
         roundOffTotal: true,
+        // Stored here (JSON) to avoid a schema migration; drives category suggestions across the app.
+        businessType: data.businessType || null,
       },
     });
+
+    // Seed the shop's starter categories from the owner's chosen business type.
+    if (data.categories?.length) {
+      await CategoriesService.seedForShop(shop.id, data.categories, data.businessType);
+    }
 
     // 3. Create default primary location and invoice sequence
     await StockLocation.create({
