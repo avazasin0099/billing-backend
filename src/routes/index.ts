@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import authRoutes from '../modules/auth/auth.routes';
 import itemsRoutes from '../modules/items/items.routes';
+import categoriesRoutes from '../modules/categories/categories.routes';
 import inventoryRoutes from '../modules/inventory/inventory.routes';
 import billingRoutes from '../modules/billing/billing.routes';
 import paymentsRoutes from '../modules/payments/payments.routes';
@@ -17,6 +18,7 @@ const router = Router();
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
 router.use('/items', itemsRoutes);
+router.use('/categories', categoriesRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/invoices', billingRoutes);
 router.use('/payments', paymentsRoutes);
