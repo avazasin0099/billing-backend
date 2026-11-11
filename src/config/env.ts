@@ -7,12 +7,14 @@ export const env = {
   PORT: parseInt(process.env.PORT || '5000', 10),
   HOST: process.env.HOST || '0.0.0.0',
   NODE_ENV: process.env.NODE_ENV || 'development',
+  DATABASE_URL: process.env.DATABASE_URL || process.env.DATABASE_PUBLIC_URL || '',
   DB_DIALECT: (process.env.DB_DIALECT || 'postgres') as 'postgres' | 'sqlite',
   DB_HOST: process.env.DB_HOST || '127.0.0.1',
   DB_PORT: parseInt(process.env.DB_PORT || '5432', 10),
   DB_NAME: process.env.DB_NAME || 'billpro_db',
   DB_USER: process.env.DB_USER || 'postgres',
   DB_PASSWORD: process.env.DB_PASSWORD || 'postgres',
+  DB_SSL: process.env.DB_SSL !== undefined ? process.env.DB_SSL === 'true' : undefined,
   DB_LOGGING: process.env.DB_LOGGING === 'true',
   JWT_SECRET: process.env.JWT_SECRET || 'billpro_dev_secret_key_change_in_production',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1d',
@@ -30,7 +32,9 @@ if (env.NODE_ENV === 'production') {
   if (!process.env.JWT_REFRESH_SECRET || env.JWT_REFRESH_SECRET.includes('billpro_dev_refresh')) {
     insecure.push('JWT_REFRESH_SECRET');
   }
-  if (!process.env.DB_PASSWORD) insecure.push('DB_PASSWORD');
+  if (!process.env.DB_PASSWORD && !process.env.DATABASE_URL && !process.env.DATABASE_PUBLIC_URL) {
+    insecure.push('DB_PASSWORD or DATABASE_URL');
+  }
   if (insecure.length > 0) {
     throw new Error(
       `Refusing to boot in production with insecure/default secrets: ${insecure.join(', ')}. ` +
